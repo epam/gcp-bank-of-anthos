@@ -51,11 +51,20 @@ def login(**kwargs):
     return conn
 
 
-def replicas_changed(old, new, **_):
+def replicas_changed(old, new, logger, **_):
     new_replicas = new.get('spec', {}).get('replicas', 0) if new else 0
     old_replicas = old.get('spec', {}).get('replicas', 0) if old else 0
+    logger.info(f"Current Postgres STS replicas {old_replicas}. New Postgres STS replicas {new_replicas}.")
     return new_replicas != old_replicas
 
+
+def propagate_hostenv(envvar, hosts):
+    if envvar.name == "PGPOOL_BACKEND_NODES":
+        return {
+            "name": "PGPOOL_BACKEND_NODES",
+            "value": ",".join(hosts),
+        }
+    return envvar
 
 
 @kopf.on.update(kind="StatefulSet",
@@ -66,18 +75,11 @@ def replicas_changed(old, new, **_):
                 })
 def reconcile_backend_nodes(logger, namespace, new, **_):
     replicas = new.get('spec', {}).get('replicas', 0) if new else 0
+    logger.info(f"New Postgres STS replicas {replicas}.")
     hosts = [
         f"{i}:accounts-db-postgresql-{i}.accounts-db-postgresql-headless:5432" \
         for i in range(replicas)
     ]
-
-    def propagate_hostenv(envvar, hosts):
-        if envvar.name == "PGPOOL_BACKEND_NODES":
-            return {
-                "name": "PGPOOL_BACKEND_NODES",
-                "value": ",".join(hosts),
-            }
-        return envvar
 
     try:
         pgpool = api.read_namespaced_deployment(name="accounts-db-pgpool", namespace=namespace)
